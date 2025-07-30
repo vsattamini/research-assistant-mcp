@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover – soft dependency
 
 # Import search coordinator for structured search execution
 try:
-    from tools.search_coordinator import SearchCoordinator
+    from orchestration.search_coordinator import SearchCoordinator
     import os
 except ImportError:  # pragma: no cover – soft dependency
     SearchCoordinator = None  # type: ignore
@@ -90,7 +90,7 @@ class MCPSimulator:
     3. Content Extraction - Extract key insights from sources
     4. Synthesis - Combine and analyze information
     5. Report Generation - Create final structured response
-    6. Follow-up - Is there anything to follow up on? # TODO: Something like suggested next steps, or something like that.
+    6. Follow-up - Suggest additional research questions and next steps.
     """
     
     def __init__(self, model_builder: ModelBuilder):
@@ -382,85 +382,107 @@ class MCPSimulator:
 
     
     def _execute_synthesize_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
-        # TODO: this should ynthesize all the information from the search and extraction tasks so the information can be used for the report task
-        """Execute a synthesis task to combine multiple sources."""
-        synthesize_prompt = f"""
-        You are synthesizing information from multiple sources into a coherent analysis.
-        
-        Research Question: {session.original_question}
-        Synthesis Focus: {task.description}
-        
-        Combine all available information to:
-        1. Identify common themes and patterns
-        2. Resolve contradictions or conflicts
-        3. Create a comprehensive understanding
-        4. Identify gaps that need further research
-        5. Form preliminary conclusions
-        
-        Provide a structured synthesis that builds toward a final answer.
+        # Gather all processed data from previous tasks
+        standardized_blocks = []  # from SEARCH tasks
+        extraction_blocks = []    # from EXTRACT tasks
+
+        for prev in session.tasks:
+            if prev.task_type == TaskType.SEARCH and prev.output_data:
+                standardized_blocks.extend(prev.output_data.get("standardized_results", []) or [])
+            if prev.task_type == TaskType.EXTRACT and prev.output_data:
+                extraction_blocks.append(prev.output_data)
+
+        # Build synthesis prompt
+        synthesis_context = {
+            "search_results": standardized_blocks,
+            "extracted_data": extraction_blocks,
+        }
+
+        synth_prompt = f"""
+        You are synthesizing information from multiple processed sources into a single coherent analysis.
+
+
+        Focus: {task.description}
+
+        Data to synthesize (JSON):
+        {json.dumps(synthesis_context, indent=2)}
+
+        Using the data above, produce a structured synthesis that includes:
+        - Themes and patterns across sources
+        - Key findings
+        - Contradictions or differing viewpoints (if any)
+        - Gaps in the information
+        - Preliminary conclusions that answer the research question
+
+        Respond in JSON with keys: "synthesis", "themes", "conclusions", "research_gaps".
         """
-        
-        synthesis_result = self.model_builder.run(synthesize_prompt)
-        
+
+        synthesis_result = self.model_builder.run(synth_prompt)
+
         return {
             "synthesis": synthesis_result,
-            "themes": self._extract_themes(synthesis_result),
-            "conclusions": self._extract_conclusions(synthesis_result),
-            "research_gaps": self._extract_gaps(synthesis_result),
-            "timestamp": datetime.now().isoformat()
+            "source_counts": {
+                "search_blocks": len(standardized_blocks),
+                "extraction_blocks": len(extraction_blocks),
+            },
+            "timestamp": datetime.now().isoformat(),
         }
-    
+
     def _execute_report_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
-        # TODO: this should take in the synthesis of the information and the report task and generate a concise report with the information
-        """Execute a report generation task."""
+        """Execute a report task to generate a final structured response."""
         report_prompt = f"""
-        You are generating a final research report.
+        You are generating a final structured response to the research question.
         
         Research Question: {session.original_question}
-        Report Focus: {task.description}
-        
-        Create a comprehensive, well-structured research report that includes:
-        1. Executive Summary
-        2. Key Findings and Insights
-        3. Detailed Analysis
-        4. Conclusions and Recommendations
-        5. Areas for Further Research
-        6. Source Citations (simulated)
-        
-        Make the report engaging, informative, and actionable.
-        Structure it clearly with headings and bullet points where appropriate.
+        Report Focus: {task.description}    
+
+        Based on the research and analysis, generate a concise report for the end user.
         """
-        
+
         report_result = self.model_builder.run(report_prompt)
-        
+
         return {
             "report": report_result,
-            "executive_summary": self._extract_executive_summary(report_result),
-            "key_findings": self._extract_key_findings(report_result),
-            "recommendations": self._extract_recommendations(report_result),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
-    def _execute_follow_up_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
-        """Execute a follow-up task to suggest next steps."""
-        follow_up_prompt = f"""
-        You are suggesting follow-up steps for research.
-        
-        Research Question: {session.original_question}
-        Follow-up Focus: {task.description} 
 
-        Based on the research and analysis, suggest:
-        1. Additional research questions
-        2. Areas for further investigation
-        3. Next steps for the research process
+    def _execute_follow_up_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
+        """Executesa follow-up task that proposes new research questions.
+
+        Uses the synthesized analysis and the final report to surface gaps or
+        natural next questions the user may wish to explore.
+        """
+
+        # Gather previous synthesis and report outputs
+        synthesis_block = None
+        report_block = None
+        for prev in session.tasks:
+            if prev.task_type == TaskType.SYNTHESIZE and prev.output_data:
+                synthesis_block = prev.output_data.get("synthesis")
+            if prev.task_type == TaskType.REPORT and prev.output_data:
+                report_block = prev.output_data.get("report")
+
+        follow_up_prompt = f"""
+        You are suggesting follow-up research directions for the user.
+
+        Research Question: {session.original_question}
+        Follow-up Focus: {task.description}
+
+        Synthesized Analysis:
+        {synthesis_block}
+
+        Final Report Provided to the User:
+        {report_block}
+
+        Based on the above, return a python list of additional
+        research questions or investigative angles the user might pursue next.
+
+        Return only the python list, no additional text.
         """
 
         follow_up_result = self.model_builder.run(follow_up_prompt)
-        
-        return {
-            "follow_up": follow_up_result,
-            "additional_questions": self._extract_additional_questions(follow_up_result),
-            "timestamp": datetime.now().isoformat()
-        }
+
+        return follow_up_result
     
     def run_research(self, question: str) -> Dict[str, Any]:
         """
@@ -521,9 +543,3 @@ class MCPSimulator:
             session.completed_at = datetime.now()
             raise
     
-    # Helper methods for extracting structured information JESUS I DONT THINK ALL OF THIS CAN BE INTEGRATED, I DONT THINK IT CAN BE USED FOR THE REPORT TASK, AND I DONT THINK IT CAN BE USED FOR THE SYNTHESIS TASK, LETS REPLACE THE LOGIC WITH SPECIFIC INSTANCES
-    def _extract_search_terms(self, text: str) -> List[str]:
-        """Extract search terms from text."""
-        # TODO: THIS SHOULD GET THE SEARCH TERMS FROM THE SEARCH PLANNING, WHIOCH SHOULD ALREADY BE A LIST OF DICTS WITH THE FOLLOWING KEYS: "search_term" (STRING), "search_type" (STRING), "search_priority" (INT 0-10), "search_source" (ONE OF LIMITED OPTIONS FROM ENUM). THE LOGIC DICTATING THE RETURN FOR THIS FUNCTION ALSO HAS TO BE REWORKED
-        # Simple extraction - in practice, this would be more sophisticated
-        return [word.strip() for word in text.split() if len(word) > 3][:10]
