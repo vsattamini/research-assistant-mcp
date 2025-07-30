@@ -38,7 +38,7 @@ The system uses a custom **MCP Simulator** (`src/orchestration/mcp_simulator.py`
 ## Design Decisions
 - **Builder Pattern for LLM Model Class**: Very good at extendability, easy to understand, creates objects that are easy to interact with. Also, modular and very favourable to provider-agnostic structure
 - **Provider**: Chose OpenAI as main provider due to cost (using 4.1-nano for most of development) and quality of embeddings. Additional bonuss is the presence of tools
-- **Bespoke Orchestration**: Chosen over Langchain and Langgraph due to greater familiarity and easy of understanding. Not necessarily better or worse
+- **Bespoke Orchestration**: Chosen over Langchain and Langgraph due to greater control, predictability of behaviour, transparency in how the process is orchestrated and to apply the concepts as a challenge
 - **Chroma for VectorDB**: Simple, easy to use, light and free
 - **Tavily**: Easy solution for web search, POC-friendly free tier
 - **Interface**: Gradio comes mostly ready out-of-the-box and looks good enough. Optimized for LLMs and chat from the get-go
@@ -80,12 +80,13 @@ tests/                     # Tests for key components of code
 
 ## 🚀 Quick Start
 
-**Prerequisites:** Python 3.8+, OpenAI API key
+**Prerequisites:** Python 3.8+, OpenAI API key, Tavily API key (ideally)
 
 ```bash
 # Install and run
 pip install -e .
 echo "OPENAI_API_KEY=your_key_here" > .env
+echo "TAVILY_API_KEY=your_key_here" > .env
 python src/main.py
 # Open http://localhost:7860
 ```
