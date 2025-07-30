@@ -816,10 +816,15 @@ def create_interface():
     return demo
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the research assistant application."""
     print("🚀 Starting Research Assistant...")
     print("🔧 Using MCP Simulator for research orchestration...")
     print("🌐 Web search tool operational...")
 
     demo = create_interface()
     demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
+
+
+if __name__ == "__main__":
+    main()
