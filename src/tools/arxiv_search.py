@@ -5,7 +5,6 @@ This module provides academic paper search capabilities using the ArXiv API
 to find relevant research papers and publications.
 """
 
-import os
 import logging
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
@@ -13,7 +12,6 @@ from datetime import datetime
 import json
 import feedparser
 import requests
-import tempfile
 import io
 
 try:
@@ -280,7 +278,9 @@ class ArxivSearchTool:
             logger.error(f"ArXiv search failed: {e}")
             return []
 
-    def extract_key_insights(self, arxiv_results: List[ArxivResult]) -> Dict[str, Any]:
+    def extract_key_insights(
+        self, arxiv_results: List[ArxivResult], query: str
+    ) -> Dict[str, Any]:
         """
         Extract key insights from ArXiv results using an LLM.
 
@@ -319,7 +319,7 @@ class ArxivSearchTool:
             }
 
             prompt = f"""
-            Based on the following academic paper ({content_type}), extract relevant insights and key findings.
+            Based on the following academic paper ({content_type}), extract relevant insights and key findings, AS THEY RELATE TO THE ORIGINAL QUERY: {query}
             Focus on:
             - "key_findings": main research findings and conclusions
             - "methodology": research methods and approaches used
@@ -328,6 +328,8 @@ class ArxivSearchTool:
             - "data_and_experiments": experimental setup and data analysis (if available)
             - "limitations": acknowledged limitations or future work needed
             
+            The query is: {query}. If the paper is not relevant to the query, return "Not relevant".
+
             Paper details:
             {content_for_llm}
             """
@@ -396,7 +398,7 @@ class ArxivSearchTool:
         papers_with_pdfs = len([r for r in arxiv_results if r.pdf_url])
         papers_with_full_text = len([r for r in arxiv_results if r.full_text])
 
-        insights_map = self.extract_key_insights(arxiv_results)
+        insights_map = self.extract_key_insights(arxiv_results, query)
         insights_extracted = len(insights_map) if isinstance(insights_map, dict) else 0
 
         results_list: List[Dict[str, Any]] = []

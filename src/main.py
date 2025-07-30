@@ -4,8 +4,6 @@ Enhanced version with MCP simulator and tools integration
 """
 
 import sys
-import os
-import json
 from pathlib import Path
 from datetime import datetime
 import gradio as gr
@@ -59,9 +57,6 @@ def create_research_assistant():
 
     # Create MCP simulator (pass vector_db for retrieval)
     mcp_simulator = MCPSimulator(model, vector_db=vector_db)
-
-    # Persistent Vector DB for caching previous Q&A pairs
-    vector_db = VectorDBTool(persist_directory="data/vector_db")
 
     return model, mcp_simulator, web_search_tool, document_processor, vector_db
 

@@ -5,7 +5,6 @@ This module coordinates searches across multiple sources (web and academic)
 and returns structured search plans and results.
 """
 
-import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -353,9 +352,7 @@ class SearchCoordinator:
         except Exception as e:
             logger.error(f"Search execution failed: {e}")
 
-        # --------------------------------------------------------------
         # Optional post-processing – run the insight-extraction helpers
-        # --------------------------------------------------------------
         standardized: List[Dict[str, Any]] = []
         if process_results:
             if web_results:

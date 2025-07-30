@@ -11,7 +11,6 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from src.orchestration.mcp_simulator import MCPSimulator, TaskType, TaskStatus
-from src.models.model_builder import ModelBuilder
 
 
 class TestMCPSimulator:

@@ -53,15 +53,7 @@ The system uses a custom **MCP Simulator** (`src/orchestration/mcp_simulator.py`
 
 ## 📊 Example
 
-**Question:** *"What are the most effective malaria prevention programs in sub-Saharan Africa?"*
-
-**System Response:**
-1. **Task Planning** → Breaks into search, extract, synthesize, report tasks
-2. **Web Search** → Finds current WHO reports, research papers, health data  
-3. **ArXiv Search** → Retrieves recent academic studies on malaria interventions
-4. **Content Extraction** → Identifies key programs: ITNs, IRS, seasonal chemoprevention
-5. **Synthesis** → Compares effectiveness, costs, implementation challenges
-6. **Final Report** → Structured answer with source citations and reasoning steps
+**Present in example.md**
 
 ## 🧪 Development
 
@@ -99,12 +91,3 @@ python src/main.py
 ```
 
 **Optional:** Add `TAVILY_API_KEY=your_key` to `.env` for enhanced web search
-
-
-**Assignment Requirements Met:**
-✅ Multi-step task decomposition  
-✅ Tool orchestration & coordination  
-✅ Document/web source retrieval  
-✅ Structured synthesis with citations  
-✅ Traceable reasoning steps  
-✅ Well-documented codebase & architecture

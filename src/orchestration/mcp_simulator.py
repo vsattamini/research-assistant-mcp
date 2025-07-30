@@ -10,7 +10,6 @@ import logging
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
-import asyncio
 from datetime import datetime
 
 from src.models.model_builder import ModelBuilder

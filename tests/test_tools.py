@@ -1,5 +1,3 @@
-import os
-import tempfile
 from typing import List
 from unittest.mock import patch
 
