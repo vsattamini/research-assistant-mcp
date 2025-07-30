@@ -190,4 +190,4 @@ class TaskPlannerTool:
 
         planned_tasks = [PlannedTask.from_dict(t) for t in raw_tasks]
         logger.info("%d tasks planned", len(planned_tasks))
-        return planned_tasks 
+        return planned_tasks

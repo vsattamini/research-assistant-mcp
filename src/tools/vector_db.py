@@ -38,10 +38,13 @@ from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
 try:
     from tqdm import tqdm
 except ImportError:  # tqdm is optional – fall back to no progress bar
+
     def tqdm(x, **kwargs):  # type: ignore
         return x
 
+
 logger = logging.getLogger(__name__)
+
 
 # Embedding provider abstraction
 class BaseEmbeddingProvider(ABC):
@@ -59,10 +62,14 @@ class BaseEmbeddingProvider(ABC):
 class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
     """Embedding provider that uses OpenAI text-embedding-3-small by default."""
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "text-embedding-3-small") -> None:
+    def __init__(
+        self, api_key: Optional[str] = None, model: str = "text-embedding-3-small"
+    ) -> None:
         api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
-            raise ValueError("OPENAI_API_KEY not found – cannot initialise OpenAI embeddings")
+            raise ValueError(
+                "OPENAI_API_KEY not found – cannot initialise OpenAI embeddings"
+            )
 
         # We *avoid* importing openai unless necessary so that projects without the package can still run when another provider is chosen.
         from openai import OpenAI  # type: ignore
@@ -98,6 +105,7 @@ EMBEDDING_PROVIDERS: Dict[str, Any] = {
     "dummy": DummyEmbeddingProvider,  # always available fallback
 }
 
+
 class VectorDBTool:
     """Wrapper around a persistent ChromaDB collection with pluggable embeddings."""
 
@@ -117,13 +125,17 @@ class VectorDBTool:
                 f"Unknown embedding provider '{embedding_provider}'. Available: {list(EMBEDDING_PROVIDERS.keys())}"
             )
         embedding_provider_kwargs = embedding_provider_kwargs or {}
-        self.embedding_provider: BaseEmbeddingProvider = provider_cls(**embedding_provider_kwargs)
+        self.embedding_provider: BaseEmbeddingProvider = provider_cls(
+            **embedding_provider_kwargs
+        )
 
         self._client = chromadb.PersistentClient(path=self.persist_directory)
         # Use Chroma's optional builtin embedding wrapper so that similarity
         # search happens server-side if possible. Otherwise we embed manually.
         if embedding_provider == "openai":
-            chroma_embed_fn = OpenAIEmbeddingFunction(api_key=os.getenv("OPENAI_API_KEY"))
+            chroma_embed_fn = OpenAIEmbeddingFunction(
+                api_key=os.getenv("OPENAI_API_KEY")
+            )
         else:
             chroma_embed_fn = None  # we will supply embeddings manually
 
@@ -150,20 +162,35 @@ class VectorDBTool:
             ids = [f"doc_{i}_{abs(hash(t)) % 1_000_000}" for i, t in enumerate(texts)]
 
         if self._collection._embedding_function is None:  # type: ignore[attr-defined]
-            logger.info("Embedding %d documents locally (batch_size=%d)…", len(texts), batch_size)
+            logger.info(
+                "Embedding %d documents locally (batch_size=%d)…",
+                len(texts),
+                batch_size,
+            )
             for i in tqdm(range(0, len(texts), batch_size)):
                 batch = texts[i : i + batch_size]
                 batch_embeds = self.embedding_provider.embed_documents(batch)
-                self._collection.add(ids=ids[i : i + batch_size], documents=batch, embeddings=batch_embeds, metadatas=metadatas[i : i + batch_size])
+                self._collection.add(
+                    ids=ids[i : i + batch_size],
+                    documents=batch,
+                    embeddings=batch_embeds,
+                    metadatas=metadatas[i : i + batch_size],
+                )
         else:
             self._collection.add(ids=ids, documents=texts, metadatas=metadatas)
-        logger.info("Added %d documents to Chroma collection '%s'", len(texts), self.collection_name)
+        logger.info(
+            "Added %d documents to Chroma collection '%s'",
+            len(texts),
+            self.collection_name,
+        )
 
     def similarity_search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
         """Return the top-k most similar documents to *query*."""
         if self._collection._embedding_function is None:  # type: ignore[attr-defined]
             query_embed = self.embedding_provider.embed_query(query)
-            results = self._collection.query(query_embeddings=[query_embed], n_results=k)
+            results = self._collection.query(
+                query_embeddings=[query_embed], n_results=k
+            )
         else:
             results = self._collection.query(query_texts=[query], n_results=k)
 
@@ -193,7 +220,10 @@ class VectorDBTool:
 
                 def _get_relevant_documents(self, query: str) -> List[Document]:  # type: ignore[override]
                     res = self.parent.similarity_search(query, self.k)
-                    return [Document(page_content=r["document"], metadata=r["metadata"]) for r in res]
+                    return [
+                        Document(page_content=r["document"], metadata=r["metadata"])
+                        for r in res
+                    ]
 
                 async def _aget_relevant_documents(self, query: str):  # type: ignore[override]
                     # Fallback to sync for simplicity
@@ -201,6 +231,6 @@ class VectorDBTool:
 
             return _VectorDBRetriever(self, k)
         except ImportError:
-            raise ImportError("langchain not installed – cannot create retriever. Run `pip install langchain`.")
-
-
+            raise ImportError(
+                "langchain not installed – cannot create retriever. Run `pip install langchain`."
+            )

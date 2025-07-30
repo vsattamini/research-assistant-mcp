@@ -8,6 +8,7 @@ import pytest
 # Bring src onto the path if tests are executed from repo root
 import sys
 from pathlib import Path
+
 repo_root = Path(__file__).parent.parent
 sys.path.insert(0, str(repo_root))
 
@@ -89,6 +90,7 @@ def test_extract_key_insights_produces_dict(stubbed_web_tool):
 # VectorDBTool tests
 # ---------------------------------------------------------------------------
 
+
 def test_vector_db_add_and_similarity_search(tmp_path):
     """VectorDBTool with the dummy embedding provider should round-trip documents."""
     db_dir = tmp_path / "vectordb"
@@ -139,8 +141,12 @@ def _dummy_arxiv_results() -> List[ArxivResult]:
 def stubbed_arxiv_tool(monkeypatch):
     tool = ArxivSearchTool()
     # Stub out the network-bound methods
-    monkeypatch.setattr(ArxivSearchTool, "_execute_search", lambda self, q: _dummy_arxiv_results())
-    monkeypatch.setattr(ArxivSearchTool, "_download_pdf_content", lambda self, url: "dummy pdf text")
+    monkeypatch.setattr(
+        ArxivSearchTool, "_execute_search", lambda self, q: _dummy_arxiv_results()
+    )
+    monkeypatch.setattr(
+        ArxivSearchTool, "_download_pdf_content", lambda self, url: "dummy pdf text"
+    )
     # Ensure the guard in _enhance_results_with_pdf_content passes
     monkeypatch.setattr(arxiv_mod, "PDF_AVAILABLE", True)
     return tool
@@ -168,7 +174,9 @@ def test_csv_analysis_basic(tmp_path):
 
     # Create descriptions CSV expected by the tool
     desc_file = tmp_path / "descriptions.csv"
-    pd.DataFrame({"filename": ["sample.csv"], "description": ["sample quantum data"]}).to_csv(desc_file, index=False)
+    pd.DataFrame(
+        {"filename": ["sample.csv"], "description": ["sample quantum data"]}
+    ).to_csv(desc_file, index=False)
 
     tool = CSVAnalysisTool(model_builder=None)
     # Redirect internal paths to the temporary directory

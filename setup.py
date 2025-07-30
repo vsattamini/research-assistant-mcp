@@ -17,7 +17,9 @@ HERE = Path(__file__).parent.resolve()
 
 # Long description from the README (if it exists)
 readme_path = HERE / "README.md"
-LONG_DESCRIPTION = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
+LONG_DESCRIPTION = (
+    readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
+)
 
 # Requirements from requirements.txt
 requirements_path = HERE / "requirements.txt"
