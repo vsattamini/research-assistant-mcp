@@ -31,7 +31,7 @@ def create_research_assistant():
     model = (
         ModelBuilder()
         .with_provider("openai")
-        .with_model("gpt-4o-mini")
+        .with_model("gpt-4.1-nano")
         .with_temperature(0.7)
         .with_max_tokens(1000)
         .with_system_prompt(
@@ -71,7 +71,7 @@ def research_assistant_streaming(question: str, show_reasoning: bool = True):
 
     try:
         # Initialize components
-        yield "🔧 **Initializing Research Assistant...**\n\nSetting up AI models and tools...", "🔧 **INITIALIZATION**\n\n▶ Setting up AI models and tools...\n▶ Loading OpenAI GPT-4o-mini model\n▶ Initializing web search capabilities\n▶ Connecting to vector database\n▶ Preparing research orchestration system\n\n"
+        yield "🔧 **Initializing Research Assistant...**\n\nSetting up AI models and tools...", "🔧 **INITIALIZATION**\n\n▶ Setting up AI models and tools...\n▶ Loading OpenAI GPT-4.1-nano model\n▶ Initializing web search capabilities\n▶ Connecting to vector database\n▶ Preparing research orchestration system\n\n"
 
         (
             model,

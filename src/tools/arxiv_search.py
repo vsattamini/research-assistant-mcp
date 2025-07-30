@@ -72,7 +72,10 @@ class ArxivSearchTool:
         """Initialize the ArXiv search tool."""
         try:
             self.model = (
-                ModelBuilder().with_provider("openai").with_model("gpt-4o-mini").build()
+                ModelBuilder()
+                .with_provider("openai")
+                .with_model("gpt-4.1-nano")
+                .build()
             )
             logger.info("ArXiv insight extraction model loaded.")
         except Exception as e:

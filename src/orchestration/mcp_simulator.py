@@ -704,7 +704,7 @@ class MCPSimulator:
                 "description": "Processing sources with LLM for key insights",
                 "status": "completed",
                 "details": {
-                    "model_used": "GPT-4o-mini",
+                    "model_used": "GPT-4.1-nano",
                     "extraction_focus": task.description,
                     "content_length": len(extraction_result),
                     "content_preview": content_preview,
@@ -1073,7 +1073,7 @@ class MCPSimulator:
                 "description": "Generating coherent analysis from multiple sources",
                 "status": "completed",
                 "details": {
-                    "model_used": "GPT-4o-mini",
+                    "model_used": "GPT-4.1-nano",
                     "synthesis_length": f"{len(synthesis_result)} characters",
                     "synthesis_components": [
                         "themes",
@@ -1243,7 +1243,7 @@ class MCPSimulator:
                 "description": "Generating final report using language model",
                 "status": "completed",
                 "details": {
-                    "model_used": "GPT-4o-mini",
+                    "model_used": "GPT-4.1-nano",
                     "report_length": f"{len(report_result)} characters",
                     "generation_focus": task.description,
                     "content_source": "Aggregated research findings",

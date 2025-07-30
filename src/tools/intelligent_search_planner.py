@@ -96,7 +96,7 @@ class IntelligentSearchPlanner:
             self.model_builder = (
                 ModelBuilder()
                 .with_provider("openai")
-                .with_model("gpt-4o-mini")
+                .with_model("gpt-4.1-nano")
                 .with_temperature(0.3)
                 .build()
             )
@@ -275,7 +275,7 @@ class IntelligentSearchPlanner:
             ]
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4.1-nano",
                 messages=messages,
                 tools=[self._planning_tool],
                 tool_choice="auto",
@@ -463,7 +463,7 @@ class IntelligentSearchPlanner:
             ]
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4.1-nano",
                 messages=messages,
                 tools=[self._validation_tool],
                 tool_choice="auto",
