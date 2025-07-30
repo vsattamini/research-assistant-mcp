@@ -157,7 +157,7 @@ def advanced_research_assistant(question: str, search_depth: str = "advanced", i
         # Search summary
         if search_results:
             response_parts.append("\n## 🔍 Information Sources\n")
-            search_summary = web_search_tool.get_search_summary(search_results)
+            search_summary = web_search_tool.get_search_summary(question, insights)
             response_parts.append(search_summary)
         
         # Key insights

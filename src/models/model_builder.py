@@ -112,7 +112,7 @@ class AnthropicProvider(BaseLLMProvider):
     pass
 
 class OllamaProvider(BaseLLMProvider):
-    """Ollama LLM provider implementation."""
+    """Ollama LLM provider implementation. Not fully actualized, but illustrates the potential of the builder pattern, and the ability to extend to different LLM providers."""
     
     def create_client(self, config: ModelConfig) -> Any:
         """Create Ollama client."""
@@ -150,7 +150,7 @@ class ModelBuilder:
         self._config = ModelConfig()
         self._providers = {
             "openai": OpenAIProvider(),
-            "ollama": OllamaProvider()
+            #"ollama": OllamaProvider()
         }
         self._client = None
         self._is_built = False
@@ -182,8 +182,6 @@ class ModelBuilder:
         self._config.max_tokens = max_tokens
         return self
     
-
-    
     def with_api_key(self, api_key: str) -> 'ModelBuilder':
         """Set the API key."""
         self._config.api_key = api_key
@@ -194,7 +192,6 @@ class ModelBuilder:
         self._config.base_url = base_url
         return self
     
-
     
     def with_retry_attempts(self, attempts: int) -> 'ModelBuilder':
         """Set the number of retry attempts."""
@@ -282,12 +279,12 @@ class ModelBuilder:
         return self
 
 
-# Convenience functions for quick model creation
+# Simple example of how to create a model with the builder patterns
 def create_openai_model(model_name: str = "gpt-4.1-nano", **kwargs) -> ModelBuilder:
     """Create an OpenAI model with default settings."""
     return ModelBuilder().with_provider("openai").with_model(model_name).build()
 
-
+# Again, not fully actualized, but illustrates the potential of the builder pattern, and the ability to extend to different LLM providers:
 def create_anthropic_model(model_name: str = "claude-3-sonnet-20240229", **kwargs) -> ModelBuilder:
     """Create an Anthropic model with default settings."""
     return ModelBuilder().with_provider("anthropic").with_model(model_name).build()

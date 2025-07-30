@@ -15,6 +15,19 @@ from datetime import datetime
 
 from models.model_builder import ModelBuilder
 
+# New import: dedicated planning tool that reliably returns JSON via function calling
+try:
+    from tools.task_planner import TaskPlannerTool
+except ImportError:  # pragma: no cover – soft dependency
+    TaskPlannerTool = None  # type: ignore
+
+# Import search coordinator for structured search execution
+try:
+    from tools.search_coordinator import SearchCoordinator
+    import os
+except ImportError:  # pragma: no cover – soft dependency
+    SearchCoordinator = None  # type: ignore
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,7 +47,8 @@ class TaskType(Enum):
     EXTRACT = "extract"
     SUMMARIZE = "summarize"
     SYNTHESIZE = "synthesize"
-    REPORT = "report"
+    REPORT = "report",
+    FOLLOW_UP = "follow_up"
 
 
 @dataclass
@@ -72,15 +86,30 @@ class MCPSimulator:
     
     This simulator breaks down complex research questions into:
     1. Task Planning - Decompose the question into subtasks
-    2. Information Retrieval - Search for relevant information
+    2. Information Retrieval - Gather relevant information from multiple sources
     3. Content Extraction - Extract key insights from sources
     4. Synthesis - Combine and analyze information
     5. Report Generation - Create final structured response
+    6. Follow-up - Is there anything to follow up on? # TODO: Something like suggested next steps, or something like that.
     """
     
     def __init__(self, model_builder: ModelBuilder):
         self.model_builder = model_builder
         self.sessions: Dict[str, ResearchSession] = {}
+        
+        # Initialize search coordinator with API keys from environment
+        if SearchCoordinator is not None:
+            try:
+                self.search_coordinator = SearchCoordinator(
+                    web_api_key=os.getenv("TAVILY_API_KEY"),
+                    openai_api_key=os.getenv("OPENAI_API_KEY")
+                )
+                logger.info("Search coordinator initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize search coordinator: {e}")
+                self.search_coordinator = None
+        else:
+            self.search_coordinator = None
         
     def create_session(self, question: str) -> str:
         """Create a new research session."""
@@ -93,80 +122,105 @@ class MCPSimulator:
         logger.info(f"Created research session: {session_id}")
         return session_id
     
-    def plan_tasks(self, question: str) -> List[ResearchTask]:
+    def high_level_plan(self, question: str) -> List[ResearchTask]:
+        """Generate a high-level research plan for *question*.
+
+        Delegates to the TaskPlannerTool if it is available, which uses function calling to ensure the structure. Otherwise falls back to a simple prompt-based LLM call
         """
-        Plan the research tasks by decomposing the question.
-        
-        Uses the LLM to break down complex questions into manageable subtasks.
-        """
+
+        if TaskPlannerTool is not None:
+            try:
+                planner = TaskPlannerTool()
+                planned_tasks = planner.plan(question)
+
+                tasks: List[ResearchTask] = []
+                for i, p_task in enumerate(planned_tasks):
+                    tasks.append(
+                        ResearchTask(
+                            id=f"task_{i+1}",
+                            task_type=TaskType(p_task.task_type.value),
+                            description=p_task.description,
+                            metadata={"priority": p_task.priority},
+                        )
+                    )
+
+                logger.info("Planned %d tasks for question using TaskPlannerTool", len(tasks))
+                return tasks
+            except Exception as e:
+                logger.warning("TaskPlannerTool failed: %s. Falling back to prompt planning.", e)
+
+        # FALLBACK TO SIMPLE METHOD
         planning_prompt = f"""
         You are a research task planner. Break down the following research question into specific, actionable tasks.
-        
+
         Research Question: {question}
-        
+
         Create a JSON array of tasks with the following structure:
         {{
             "task_type": "search|extract|summarize|synthesize|report",
             "description": "Clear description of what this task should accomplish",
             "priority": 1-5 (1=highest priority),
-            "estimated_duration": "short|medium|long"
         }}
-        
+
         Task types:
         - search: Find relevant information from web or documents
         - extract: Extract key facts, data, or insights from sources
         - summarize: Create concise summaries of information
         - synthesize: Combine and analyze multiple sources
         - report: Generate final structured response
-        
+
         Return only the JSON array, no additional text.
         """
-        
+
         try:
             response = self.model_builder.run(planning_prompt)
-            # Extract JSON from response
             tasks_data = json.loads(response.strip())
-            
+
             tasks = []
             for i, task_data in enumerate(tasks_data):
                 task = ResearchTask(
                     id=f"task_{i+1}",
                     task_type=TaskType(task_data["task_type"]),
                     description=task_data["description"],
-                    metadata={
-                        "priority": task_data.get("priority", 3),
-                        "estimated_duration": task_data.get("estimated_duration", "medium")
-                    }
+                    metadata={"priority": task_data.get("priority", 3)},
                 )
                 tasks.append(task)
-            
-            logger.info(f"Planned {len(tasks)} tasks for question: {question}")
-            return tasks
-            
+
+                logger.info("Planned %d tasks for question using fallback planning", len(tasks))
+                return tasks
         except Exception as e:
-            logger.error(f"Failed to plan tasks: {e}")
-            # Fallback to basic task structure
+            logger.error("Failed to plan tasks with fallback prompt: %s", e)
+
+            # Final fallback – minimal default plan
             return [
                 ResearchTask(
                     id="task_1",
                     task_type=TaskType.SEARCH,
-                    description="Search for relevant information about the research question"
+                    description="Search for relevant information about the research question",
                 ),
                 ResearchTask(
                     id="task_2",
                     task_type=TaskType.EXTRACT,
-                    description="Extract key insights and facts from search results"
+                    description="Extract key insights and facts from search results",
                 ),
                 ResearchTask(
                     id="task_3",
                     task_type=TaskType.SYNTHESIZE,
-                    description="Synthesize information into a comprehensive answer"
-                )
+                    description="Synthesize information into a comprehensive answer",
+                ),
             ]
-    
-    def execute_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
+    def plan_tasks(self, question: str) -> List[ResearchTask]:
+        """Public alias for :pymeth:`high_level_plan` (deprecated).
+
+        Existing code and tests expect a ``plan_tasks`` method. Internally it
+        simply forwards to :pymeth:`high_level_plan`.
         """
-        Execute a single research task.
+
+        return self.high_level_plan(question)
+    
+    def plan_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
+        """
+        Plan a single research task.
         
         This method coordinates with different tools based on the task type.
         """
@@ -184,6 +238,8 @@ class MCPSimulator:
                 result = self._execute_synthesize_task(task, session)
             elif task.task_type == TaskType.REPORT:
                 result = self._execute_report_task(task, session)
+            elif task.task_type == TaskType.FOLLOW_UP:
+                result = self._execute_follow_up_task(task, session)
             else:
                 raise ValueError(f"Unknown task type: {task.task_type}")
             
@@ -202,8 +258,55 @@ class MCPSimulator:
             raise
     
     def _execute_search_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
-        """Execute a search task to find relevant information."""
-        # This would integrate with web search tools
+        """Execute search task using SearchCoordinator."""
+        if self.search_coordinator is None:
+            logger.warning("Search coordinator not available, falling back to basic search")
+            return self._fallback_search_task(task, session)
+        
+        try:
+            # One-shot combined search
+            search_result = self.search_coordinator.simple_search(
+                query=session.original_question,
+                focus=task.description
+            )
+
+            # Add sources to session
+            for web_res in search_result.web_results:
+                session.sources.append({
+                    "type": "web",
+                    "title": web_res.title,
+                    "url": web_res.url,
+                    "source": "tavily",
+                })
+
+            for paper in search_result.arxiv_results:
+                session.sources.append({
+                    "type": "academic",
+                    "title": paper.title,
+                    "url": paper.url,
+                    "source": "arxiv",
+                })
+
+            logger.info(
+                "Search completed: %d web + %d arxiv results",
+                len(search_result.web_results),
+                len(search_result.arxiv_results),
+            )
+
+            return {
+                "search_plan": search_result.search_plan.__dict__,
+                "web_results": [r.__dict__ for r in search_result.web_results],
+                "arxiv_results": [r.__dict__ for r in search_result.arxiv_results],
+                "total_results": len(search_result.web_results) + len(search_result.arxiv_results),
+                "timestamp": datetime.now().isoformat(),
+            }
+            
+        except Exception as e:
+            logger.error(f"Search coordinator failed: {e}. Using fallback.")
+            return self._fallback_search_task(task, session)
+    
+    def _fallback_search_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
+        """Fallback search implementation when SearchCoordinator is not available."""
         search_prompt = f"""
         You are a research assistant searching for information.
         
@@ -216,22 +319,20 @@ class MCPSimulator:
         2. Types of sources to look for
         3. Specific questions to answer
         4. Potential data or statistics needed
-        
-        Format your response as structured information that can be used by other tasks.
         """
         
         search_result = self.model_builder.run(search_prompt)
         
         return {
             "search_strategy": search_result,
-            "search_terms": self._extract_search_terms(search_result),
+            "search_terms": ["fallback_search"],
             "source_types": ["academic_papers", "reports", "news_articles", "government_data"],
             "timestamp": datetime.now().isoformat()
         }
     
     def _execute_extract_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
         """Execute an extraction task to pull key insights from sources."""
-        # Simulate extracting information from search results
+        # TODO: INTRODUCE LOGIC THAT EXTRACTS INFORMATION IF THE SEARCH TOOLS RETURNED UNPROCESSED INFORMATION, HAVE TO ADD FLAG TO THE SEARCH AND RETRIEVAL TOOLS TO INDICATE IF THE INFORMATION IS PROCESSED OR NOT
         extract_prompt = f"""
         You are extracting key insights and facts from research sources.
         
@@ -259,6 +360,7 @@ class MCPSimulator:
         }
     
     def _execute_summarize_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
+        # TODO: I HAVE THIS AS A PART OF THE TOOLS THEMSELVES, WOULD IT MAKE SENSE TO KEEP THIS HERE?
         """Execute a summarization task."""
         summarize_prompt = f"""
         You are creating concise summaries of research information.
@@ -285,6 +387,7 @@ class MCPSimulator:
         }
     
     def _execute_synthesize_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
+        # TODO: this should ynthesize all the information from the search and extraction tasks so the information can be used for the report task
         """Execute a synthesis task to combine multiple sources."""
         synthesize_prompt = f"""
         You are synthesizing information from multiple sources into a coherent analysis.
@@ -313,6 +416,7 @@ class MCPSimulator:
         }
     
     def _execute_report_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
+        # TODO: this should take in the synthesis of the information and the report task and generate a concise report with the information
         """Execute a report generation task."""
         report_prompt = f"""
         You are generating a final research report.
@@ -341,6 +445,27 @@ class MCPSimulator:
             "recommendations": self._extract_recommendations(report_result),
             "timestamp": datetime.now().isoformat()
         }
+    def _execute_follow_up_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
+        """Execute a follow-up task to suggest next steps."""
+        follow_up_prompt = f"""
+        You are suggesting follow-up steps for research.
+        
+        Research Question: {session.original_question}
+        Follow-up Focus: {task.description} 
+
+        Based on the research and analysis, suggest:
+        1. Additional research questions
+        2. Areas for further investigation
+        3. Next steps for the research process
+        """
+
+        follow_up_result = self.model_builder.run(follow_up_prompt)
+        
+        return {
+            "follow_up": follow_up_result,
+            "additional_questions": self._extract_additional_questions(follow_up_result),
+            "timestamp": datetime.now().isoformat()
+        }
     
     def run_research(self, question: str) -> Dict[str, Any]:
         """
@@ -359,7 +484,7 @@ class MCPSimulator:
             
             # Execute tasks in order
             for task in tasks:
-                result = self.execute_task(task, session)
+                result = self.plan_task(task, session)
                 session.reasoning_steps.append(f"Completed {task.task_type.value}: {task.description}")
                 
                 # Update session with intermediate results
@@ -401,51 +526,9 @@ class MCPSimulator:
             session.completed_at = datetime.now()
             raise
     
-    # Helper methods for extracting structured information
+    # Helper methods for extracting structured information JESUS I DONT THINK ALL OF THIS CAN BE INTEGRATED, I DONT THINK IT CAN BE USED FOR THE REPORT TASK, AND I DONT THINK IT CAN BE USED FOR THE SYNTHESIS TASK, LETS REPLACE THE LOGIC WITH SPECIFIC INSTANCES
     def _extract_search_terms(self, text: str) -> List[str]:
         """Extract search terms from text."""
+        # TODO: THIS SHOULD GET THE SEARCH TERMS FROM THE SEARCH PLANNING, WHIOCH SHOULD ALREADY BE A LIST OF DICTS WITH THE FOLLOWING KEYS: "search_term" (STRING), "search_type" (STRING), "search_priority" (INT 0-10), "search_source" (ONE OF LIMITED OPTIONS FROM ENUM). THE LOGIC DICTATING THE RETURN FOR THIS FUNCTION ALSO HAS TO BE REWORKED
         # Simple extraction - in practice, this would be more sophisticated
         return [word.strip() for word in text.split() if len(word) > 3][:10]
-    
-    def _extract_statistics(self, text: str) -> List[str]:
-        """Extract statistics from text."""
-        # Simple extraction - in practice, this would use NLP
-        return [line.strip() for line in text.split('\n') if any(char.isdigit() for char in line)][:5]
-    
-    def _extract_findings(self, text: str) -> List[str]:
-        """Extract findings from text."""
-        # Simple extraction - in practice, this would use NLP
-        return [line.strip() for line in text.split('\n') if line.strip() and len(line) > 20][:5]
-    
-    def _extract_key_points(self, text: str) -> List[str]:
-        """Extract key points from summary."""
-        return [line.strip() for line in text.split('\n') if line.strip() and line.startswith(('-', '•', '*'))][:5]
-    
-    def _extract_themes(self, text: str) -> List[str]:
-        """Extract themes from synthesis."""
-        return [line.strip() for line in text.split('\n') if 'theme' in line.lower() or 'pattern' in line.lower()][:3]
-    
-    def _extract_conclusions(self, text: str) -> List[str]:
-        """Extract conclusions from synthesis."""
-        return [line.strip() for line in text.split('\n') if 'conclusion' in line.lower() or 'finding' in line.lower()][:3]
-    
-    def _extract_gaps(self, text: str) -> List[str]:
-        """Extract research gaps from synthesis."""
-        return [line.strip() for line in text.split('\n') if 'gap' in line.lower() or 'further research' in line.lower()][:3]
-    
-    def _extract_executive_summary(self, text: str) -> str:
-        """Extract executive summary from report."""
-        lines = text.split('\n')
-        for i, line in enumerate(lines):
-            if 'executive summary' in line.lower():
-                # Return next few lines as summary
-                return '\n'.join(lines[i+1:i+5])
-        return text[:200] + "..."  # Fallback
-    
-    def _extract_key_findings(self, text: str) -> List[str]:
-        """Extract key findings from report."""
-        return [line.strip() for line in text.split('\n') if 'finding' in line.lower() or 'insight' in line.lower()][:5]
-    
-    def _extract_recommendations(self, text: str) -> List[str]:
-        """Extract recommendations from report."""
-        return [line.strip() for line in text.split('\n') if 'recommendation' in line.lower() or 'suggest' in line.lower()][:5]

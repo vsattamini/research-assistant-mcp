@@ -11,6 +11,7 @@ from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime
 import json
+from src.models.model_builder import ModelBuilder
 
 try:
     from tavily import TavilyClient
@@ -68,7 +69,7 @@ class WebSearchTool:
         """
         self.api_key = api_key or os.getenv("TAVILY_API_KEY")
         if not self.api_key:
-            logger.warning("Tavily API key not found. Web search will be simulated.")
+            logger.warning("Tavily API key not found. Web search aborted.")
             self.client = None
         else:
             try:
@@ -77,6 +78,16 @@ class WebSearchTool:
             except Exception as e:
                 logger.error(f"Failed to initialize Tavily client: {e}")
                 self.client = None
+        
+        try:
+            self.model = (ModelBuilder()
+                          .with_provider("openai")
+                          .with_model("gpt-4.1-nano")
+                          .build())
+            logger.info("Insight extraction model loaded.")
+        except Exception as e:
+            logger.error(f"Failed to load insight extraction model: {e}")
+            self.model = None
     
     def search(self, query: str, **kwargs) -> List[SearchResult]:
         """
@@ -104,7 +115,7 @@ class WebSearchTool:
             List of search results
         """
         # Build a research-focused query
-        research_query = f"research {topic} latest findings studies"
+        research_query = f"{topic} latest findings studies"
         
         # Configure search parameters for research
         search_params = {
@@ -118,7 +129,6 @@ class WebSearchTool:
             academic_domains = [
                 "scholar.google.com",
                 "researchgate.net",
-                "arxiv.org",
                 "pubmed.ncbi.nlm.nih.gov",
                 "ieee.org",
                 "acm.org",
@@ -144,7 +154,7 @@ class WebSearchTool:
         
         search_params = {
             "search_type": "news",
-            "search_depth": "basic",
+            "search_depth": "advanced",
             "max_results": 10
         }
         
@@ -160,7 +170,7 @@ class WebSearchTool:
         Returns:
             List of search results with statistical information
         """
-        stats_query = f"statistics data numbers {topic} 2024 2023"
+        stats_query = f"statistics data numbers {topic} 2025 2024 YTD"
         
         # Focus on government and data sources
         data_domains = [
@@ -235,83 +245,93 @@ class WebSearchTool:
         except Exception as e:
             logger.error(f"Search failed: {e}")
             return "Web search returned no results, check API key or Tavily APIs status"
-    
-    
+
+
     def extract_key_insights(self, search_results: List[SearchResult]) -> Dict[str, Any]:
         """
-        Extract key insights from search results.
-        
+        Extract key insights from search results using an LLM.
+
         Args:
             search_results: List of search results
-            
+
         Returns:
             Dictionary containing extracted insights
         """
-        insights = {
-            "key_facts": [],
-            "statistics": [],
-            "trends": [],
-            "sources": [],
-            "confidence_score": 0.0
-        }
+        if not self.model:
+            logger.warning("Insight extraction model not available. Returning raw results.")
+            return {"error": "Model not available"}
+        insights = {}
+        # Prepare content for the LLM
+        content_for_llm = ""
+        for i, r in enumerate(search_results):
+            insights[f"{i+1}"] = {"title": r.title,
+                "url": r.url,
+                "score": r.score,
+                "type": r.source_type}
+            content_for_llm = f"Title: {r.title}\n\nContent: {r.content}\n\n"
+
+            prompt = f"""
+            Based on the following search result, extract relevant insights and key pieces of information.
+            The relevant insights and key pieces of information may include, butr are not limited to:
+            - "key_facts": key pieces of information
+            - "statistics": important statistics or data points.
+            - "trends": trends mentioned in the search result.
+
+            Search result:
+            {content_for_llm}
+            """
+
+            try:
+                response = self.model.run(prompt)
+                insights[f"{i+1}"]["insights"] = response
+            except Exception as e:
+                logger.error(f"Failed to get insights from LLM: {e}")
+                insights[f"{i+1}"]["insights"] = f"Inconclusive due to following error: {e}"
         
-        for result in search_results:
-            # Extract key facts (simple heuristic)
-            content_words = result.content.split()
-            if len(content_words) > 20:
-                insights["key_facts"].append(result.content[:200] + "...")
             
-            # Extract statistics (look for numbers)
-            if any(char.isdigit() for char in result.content):
-                insights["statistics"].append(result.content[:150] + "...")
-            
-            # Track sources
-            insights["sources"].append({
-                "title": result.title,
-                "url": result.url,
-                "score": result.score,
-                "type": result.source_type
-            })
         
-        # Calculate confidence score based on result quality
         if search_results:
             avg_score = sum(r.score for r in search_results) / len(search_results)
             insights["confidence_score"] = avg_score
-        
+        else:
+            insights["confidence_score"] = 0.0
+
         return insights
-    
-    def get_search_summary(self, search_results: List[SearchResult]) -> str:
+
+    def get_search_summary(
+        self, query: str, insights: Dict[str, Any]
+    ) -> str:
         """
-        Generate a summary of search results.
-        
+        Generate a summary of search insights using an LLM.
+
         Args:
-            search_results: List of search results
-            
+            query: The original search query.
+            insights: The extracted insights from the search results.
+
         Returns:
-            Summary string
+            A summary string.
         """
-        if not search_results:
-            return "No search results found."
+        if not self.model:
+            return "Summary model not available."
+            
+        summary_prompt = f"""
+        Original Query: {query}
         
-        summary_parts = [
-            f"Found {len(search_results)} relevant sources:",
-            ""
-        ]
+        Extracted Insights:
+        {json.dumps(insights, indent=2)}
+
+        Based on the original query and the extracted insights, provide a comprehensive summary.
+        """
         
-        for i, result in enumerate(search_results[:5], 1):
-            summary_parts.append(f"{i}. **{result.title}**")
-            summary_parts.append(f"   - Source: {result.source_type}")
-            summary_parts.append(f"   - Relevance: {result.score:.2f}")
-            summary_parts.append(f"   - {result.content[:100]}...")
-            summary_parts.append("")
-        
-        if len(search_results) > 5:
-            summary_parts.append(f"... and {len(search_results) - 5} more sources")
-        
-        return "\n".join(summary_parts)
+        try:
+            summary = self.model.run(summary_prompt)
+            return summary
+        except Exception as e:
+            logger.error(f"Failed to generate summary: {e}")
+            return "Could not generate a summary due to an error."
 
 
-# Convenience function for quick search
+# Function to test tavily API
 def test_search(query: str, api_key: Optional[str] = None) -> List[SearchResult]:
     """
     Perform a quick web search.
@@ -326,20 +346,3 @@ def test_search(query: str, api_key: Optional[str] = None) -> List[SearchResult]
     search_tool = WebSearchTool(api_key=api_key)
     return search_tool.search(query)
 
-
-# Example usage
-if __name__ == "__main__":
-    # Example search
-    search_tool = WebSearchTool()
-    
-    # Research search
-    results = search_tool.search_research_topic("renewable energy costs")
-    print(f"Found {len(results)} research results")
-    
-    # Extract insights
-    insights = search_tool.extract_key_insights(results)
-    print(f"Key insights: {len(insights['key_facts'])} facts found")
-    
-    # Generate summary
-    summary = search_tool.get_search_summary(results)
-    print(summary)
