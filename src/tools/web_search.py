@@ -330,6 +330,43 @@ class WebSearchTool:
             logger.error(f"Failed to generate summary: {e}")
             return "Could not generate a summary due to an error."
 
+    def format_results(self, query: str, search_results: List[SearchResult]) -> Dict[str, Any]:
+        """Return standardized structure with key insights and summary."""
+        if not search_results:
+            return {"query": query, "results": [], "summary": "No results"}
+
+        # Extract insights first
+        insights_map = self.extract_key_insights(search_results)
+
+        # Build list of result dicts in requested schema
+        results_list: List[Dict[str, Any]] = []
+        for idx, res in enumerate(search_results):
+            key_insights = None
+            if isinstance(insights_map, dict):
+                key_insights = insights_map.get(str(idx + 1), {}).get("insights")
+
+            results_list.append({
+                "title": res.title,
+                "url": res.url,
+                "relevance_score": res.score,
+                "type": res.source_type,
+                "key_insights": key_insights,
+            })
+
+        # Produce summary (fallback to empty string on failure)
+        summary = ""
+        if isinstance(insights_map, dict):
+            try:
+                summary = self.get_search_summary(query, insights_map)
+            except Exception:
+                summary = ""
+
+        return {
+            "query": query,
+            "results": results_list,
+            "summary": summary,
+        }
+
 
 # Function to test tavily API
 def test_search(query: str, api_key: Optional[str] = None) -> List[SearchResult]:

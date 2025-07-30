@@ -297,6 +297,8 @@ class MCPSimulator:
                 "search_plan": search_result.search_plan.__dict__,
                 "web_results": [r.__dict__ for r in search_result.web_results],
                 "arxiv_results": [r.__dict__ for r in search_result.arxiv_results],
+                "standardized_results": search_result.standardized_results,
+                "results_processed": search_result.results_processed,
                 "total_results": len(search_result.web_results) + len(search_result.arxiv_results),
                 "timestamp": datetime.now().isoformat(),
             }
@@ -332,7 +334,16 @@ class MCPSimulator:
     
     def _execute_extract_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
         """Execute an extraction task to pull key insights from sources."""
-        # TODO: INTRODUCE LOGIC THAT EXTRACTS INFORMATION IF THE SEARCH TOOLS RETURNED UNPROCESSED INFORMATION, HAVE TO ADD FLAG TO THE SEARCH AND RETRIEVAL TOOLS TO INDICATE IF THE INFORMATION IS PROCESSED OR NOT
+        # Skip extraction if all preceding search tasks already provided processed data
+        search_tasks = [t for t in session.tasks if t.task_type == TaskType.SEARCH]
+        if search_tasks and all(t.output_data.get("results_processed") for t in search_tasks if t.output_data):
+            logger.info("All search results are already processed; skipping extraction task %s", task.id)
+            return {
+                "skipped": True,
+                "reason": "search data already processed",
+                "timestamp": datetime.now().isoformat(),
+            }
+
         extract_prompt = f"""
         You are extracting key insights and facts from research sources.
         
@@ -360,31 +371,15 @@ class MCPSimulator:
         }
     
     def _execute_summarize_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
-        # TODO: I HAVE THIS AS A PART OF THE TOOLS THEMSELVES, WOULD IT MAKE SENSE TO KEEP THIS HERE?
-        """Execute a summarization task."""
-        summarize_prompt = f"""
-        You are creating concise summaries of research information.
-        
-        Research Question: {session.original_question}
-        Summarization Focus: {task.description}
-        
-        Create a clear, concise summary that:
-        1. Captures the main points
-        2. Highlights key insights
-        3. Identifies patterns or trends
-        4. Notes any contradictions or gaps
-        
-        Keep the summary focused and actionable.
-        """
-        
-        summary_result = self.model_builder.run(summarize_prompt)
-        
+        """OBSOLETE: Skip summarization because synthesis already performs aggregation and extract summarizes extracted information"""
+
+        logger.info("Skipping summarization task %s because synthesis handles aggregation", task.id)
         return {
-            "summary": summary_result,
-            "key_points": self._extract_key_points(summary_result),
-            "word_count": len(summary_result.split()),
-            "timestamp": datetime.now().isoformat()
+            "skipped": True,
+            "reason": "summary skipped; synthesis handles aggregation",
+            "timestamp": datetime.now().isoformat(),
         }
+
     
     def _execute_synthesize_task(self, task: ResearchTask, session: ResearchSession) -> Dict[str, Any]:
         # TODO: this should ynthesize all the information from the search and extraction tasks so the information can be used for the report task

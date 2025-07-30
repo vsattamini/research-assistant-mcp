@@ -277,6 +277,40 @@ class ArxivSearchTool:
             logger.error(f"Failed to generate summary: {e}")
             return "Could not generate a summary due to an error."
 
+    def format_results(self, query: str, arxiv_results: List[ArxivResult]) -> Dict[str, Any]:
+        """Return standardized structure with key insights and summary."""
+        if not arxiv_results:
+            return {"query": query, "results": [], "summary": "No results"}
+
+        insights_map = self.extract_key_insights(arxiv_results)
+
+        results_list: List[Dict[str, Any]] = []
+        for idx, res in enumerate(arxiv_results):
+            key_insights = None
+            if isinstance(insights_map, dict):
+                key_insights = insights_map.get(str(idx + 1), {}).get("insights")
+
+            results_list.append({
+                "title": res.title,
+                "url": res.url,
+                "relevance_score": res.score,
+                "type": "academic",
+                "key_insights": key_insights,
+            })
+
+        summary = ""
+        if isinstance(insights_map, dict):
+            try:
+                summary = self.get_search_summary(query, insights_map)
+            except Exception:
+                summary = ""
+
+        return {
+            "query": query,
+            "results": results_list,
+            "summary": summary,
+        }
+
 
 # Function to test ArXiv API
 def test_arxiv_search(query: str) -> List[ArxivResult]:

@@ -57,7 +57,11 @@ class SearchResults:
     arxiv_results: List[ArxivResult]
     search_plan: SearchPlan
     summary: str = ""
-    insights: Dict[str, Any] = None
+    standardized_results: List[Dict[str, Any]] = None
+    # Indicates whether the individual tool results have already been processed
+    # (i.e. extract_key_insights has been run) so that downstream steps can
+    # decide whether a separate EXTRACT task is necessary.
+    results_processed: bool = False
 
 
 class SearchCoordinator:
@@ -236,7 +240,7 @@ class SearchCoordinator:
         ]
         return plans
     
-    def execute_search_plan(self, plan: SearchPlan) -> SearchResults:
+    def execute_search_plan(self, plan: SearchPlan, process_results: bool = True) -> SearchResults:
         """
         Execute a single search plan.
         
@@ -246,8 +250,8 @@ class SearchCoordinator:
         Returns:
             SearchResults containing results from relevant sources
         """
-        web_results = []
-        arxiv_results = []
+        web_results: List[SearchResult] = []
+        arxiv_results: List[ArxivResult] = []
         
         try:
             # Execute web search if requested
@@ -273,13 +277,25 @@ class SearchCoordinator:
         except Exception as e:
             logger.error(f"Search execution failed: {e}")
         
+        # --------------------------------------------------------------
+        # Optional post-processing – run the insight-extraction helpers
+        # --------------------------------------------------------------
+        standardized: List[Dict[str, Any]] = []
+        if process_results:
+            if web_results:
+                standardized.append(self.web_tool.format_results(plan.search_term, web_results))
+            if arxiv_results:
+                standardized.append(self.arxiv_tool.format_results(plan.search_term, arxiv_results))
+
         return SearchResults(
             web_results=web_results,
             arxiv_results=arxiv_results,
-            search_plan=plan
+            search_plan=plan,
+            standardized_results=standardized if standardized else None,
+            results_processed=process_results and bool(standardized)
         )
     
-    def execute_all_searches(self, plans: List[SearchPlan]) -> List[SearchResults]:
+    def execute_all_searches(self, plans: List[SearchPlan], process_results: bool = True) -> List[SearchResults]:
         """
         Execute multiple search plans.
         
@@ -291,7 +307,7 @@ class SearchCoordinator:
         """
         all_results = []
         for plan in plans:
-            results = self.execute_search_plan(plan)
+            results = self.execute_search_plan(plan, process_results=process_results)
             all_results.append(results)
         
         return all_results 
@@ -300,7 +316,7 @@ class SearchCoordinator:
     # Thin wrapper: one-shot combined search (no LLM planning)
     # ------------------------------------------------------------------
 
-    def simple_search(self, query: str, focus: str = "") -> SearchResults:
+    def simple_search(self, query: str, focus: str = "", process_results: bool = True) -> SearchResults:
         """Run a lightweight combined search across web + arxiv.
 
         This skips the LLM planning step and just performs:
@@ -336,8 +352,18 @@ class SearchCoordinator:
             max_results=10,
         )
 
+        # Optional post-processing step
+        standardized: List[Dict[str, Any]] = []
+        if process_results:
+            if web_results:
+                standardized.append(self.web_tool.format_results(search_term, web_results))
+            if arxiv_results:
+                standardized.append(self.arxiv_tool.format_results(query, arxiv_results))
+
         return SearchResults(
             web_results=web_results,
             arxiv_results=arxiv_results,
             search_plan=plan,
+            standardized_results=standardized if standardized else None,
+            results_processed=process_results and bool(standardized)
         ) 
