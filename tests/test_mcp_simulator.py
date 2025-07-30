@@ -68,7 +68,7 @@ class TestMCPSimulator:
     
     def test_execute_search_task(self):
         """Test search task execution."""
-        from orchestration.mcp_simulator import ResearchTask, ResearchSession
+        from src.orchestration.mcp_simulator import ResearchTask, ResearchSession
         
         # Create test task and session
         task = ResearchTask(
@@ -94,7 +94,7 @@ class TestMCPSimulator:
     
     def test_execute_extract_task(self):
         """Test extract task execution."""
-        from orchestration.mcp_simulator import ResearchTask, ResearchSession
+        from src.orchestration.mcp_simulator import ResearchTask, ResearchSession
         
         task = ResearchTask(
             id="test_task",
@@ -119,7 +119,7 @@ class TestMCPSimulator:
     
     def test_execute_synthesize_task(self):
         """Test synthesize task execution."""
-        from orchestration.mcp_simulator import ResearchTask, ResearchSession
+        from src.orchestration.mcp_simulator import ResearchTask, ResearchSession
         
         task = ResearchTask(
             id="test_task",
@@ -144,7 +144,7 @@ class TestMCPSimulator:
     
     def test_execute_report_task(self):
         """Test report task execution."""
-        from orchestration.mcp_simulator import ResearchTask, ResearchSession
+        from src.orchestration.mcp_simulator import ResearchTask, ResearchSession
         
         task = ResearchTask(
             id="test_task",
@@ -216,7 +216,7 @@ class TestMCPSimulator:
     
     def test_task_execution_error_handling(self):
         """Test error handling in task execution."""
-        from orchestration.mcp_simulator import ResearchTask, ResearchSession
+        from src.orchestration.mcp_simulator import ResearchTask, ResearchSession
         
         task = ResearchTask(
             id="test_task",
