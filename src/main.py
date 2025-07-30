@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 from models.model_builder import ModelBuilder, create_openai_model
 from orchestration.mcp_simulator import MCPSimulator
 from tools.web_search import WebSearchTool
-from tools.document_processor import DocumentProcessor
+from utils.document_processor import DocumentProcessor
+from tools.vector_db import VectorDBTool
 
 load_dotenv()
 
@@ -44,7 +45,10 @@ def create_research_assistant():
     web_search_tool = WebSearchTool()
     document_processor = DocumentProcessor()
     
-    return model, mcp_simulator, web_search_tool, document_processor
+    # Persistent Vector DB for caching previous Q&A pairs
+    vector_db = VectorDBTool(persist_directory="data/vector_db")
+    
+    return model, mcp_simulator, web_search_tool, document_processor, vector_db
 
 def research_assistant(question: str, show_reasoning: bool = True) -> str:
     """
@@ -55,7 +59,12 @@ def research_assistant(question: str, show_reasoning: bool = True) -> str:
     
     try:
         # Initialize components
-        model, mcp_simulator, web_search_tool, document_processor = create_research_assistant()
+        model, mcp_simulator, web_search_tool, document_processor, vector_db = create_research_assistant()
+        
+        # Check vector DB cache first
+        cached = vector_db.similarity_search(question, k=1)
+        if cached and cached[0]["distance"] < 0.1 and cached[0]["metadata"].get("answer"):
+            return cached[0]["metadata"]["answer"]
         
         # Run MCP research workflow
         research_result = mcp_simulator.run_research(question)
@@ -90,6 +99,11 @@ def research_assistant(question: str, show_reasoning: bool = True) -> str:
             response_parts.append(f"- **Failed**: {metadata.get('failed_tasks', 0)}")
             response_parts.append(f"- **Duration**: {metadata.get('duration', 0):.1f} seconds")
         
+        # Cache result in vector DB
+        try:
+            vector_db.add_texts([question], metadatas=[{"answer": "\n".join(response_parts)}])
+        except Exception:
+            pass
         return "\n".join(response_parts)
         
     except Exception as e:
@@ -113,7 +127,12 @@ def advanced_research_assistant(question: str, search_depth: str = "advanced", i
     
     try:
         # Initialize components
-        model, mcp_simulator, web_search_tool, document_processor = create_research_assistant()
+        model, mcp_simulator, web_search_tool, document_processor, vector_db = create_research_assistant()
+        
+        # Check vector DB cache first
+        cached = vector_db.similarity_search(question, k=1)
+        if cached and cached[0]["distance"] < 0.1 and cached[0]["metadata"].get("answer"):
+            return cached[0]["metadata"]["answer"]
         
         # Step 1: Web Search
         search_results = web_search_tool.search_research_topic(question, include_academic=include_academic)
@@ -157,7 +176,7 @@ def advanced_research_assistant(question: str, search_depth: str = "advanced", i
         # Search summary
         if search_results:
             response_parts.append("\n## 🔍 Information Sources\n")
-            search_summary = web_search_tool.get_search_summary(question, insights)
+            search_summary = web_search_tool.get_search_summary(search_results)
             response_parts.append(search_summary)
         
         # Key insights
@@ -184,6 +203,11 @@ def advanced_research_assistant(question: str, search_depth: str = "advanced", i
             for i, step in enumerate(research_result["reasoning_steps"], 1):
                 response_parts.append(f"{i}. {step}")
         
+        # Cache result in vector DB
+        try:
+            vector_db.add_texts([question], metadatas=[{"answer": "\n".join(response_parts)}])
+        except Exception:
+            pass
         return "\n".join(response_parts)
         
     except Exception as e:

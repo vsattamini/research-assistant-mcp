@@ -293,23 +293,3 @@ def create_anthropic_model(model_name: str = "claude-3-sonnet-20240229", **kwarg
 def create_ollama_model(model_name: str = "llama2", **kwargs) -> ModelBuilder:
     """Create an Ollama model with default settings."""
     return ModelBuilder().with_provider("ollama").with_model(model_name).build()
-
-
-# Example usage
-if __name__ == "__main__":
-    # Example 1: Basic usage
-    model = (ModelBuilder()
-             .with_provider("openai")
-             .with_model("gpt-4.1-nano")
-             .with_temperature(0.7)
-             .with_max_tokens(1000)
-             .with_system_prompt("You are a helpful assistant.")
-             .build())
-    
-    response = model.run("What is the capital of France?")
-    print(response)
-    
-    # Example 2: Using convenience function
-    model2 = create_openai_model("gpt-4.1-nano", temperature=0.5)
-    response2 = model2.run("Explain quantum computing in simple terms.")
-    print(response2)
