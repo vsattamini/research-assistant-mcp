@@ -13,7 +13,14 @@ from datetime import datetime
 import json
 import feedparser
 import requests
-from urllib.parse import quote_plus
+import tempfile
+import io
+
+try:
+    import PyPDF2
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
 
 from src.models.model_builder import ModelBuilder
 
@@ -34,6 +41,7 @@ class ArxivResult:
     categories: List[str]
     score: float = 0.0
     metadata: Dict[str, Any] = None
+    full_text: Optional[str] = None  # Add field for full PDF content
 
 
 @dataclass
@@ -71,27 +79,30 @@ class ArxivSearchTool:
             logger.error(f"Failed to load insight extraction model: {e}")
             self.model = None
     
-    def search(self, query: str, **kwargs) -> List[ArxivResult]:
+    def search(self, query: str, download_pdfs: bool = True, **kwargs) -> List[ArxivResult]:
         """
         Perform an ArXiv search.
         
         Args:
             query: The search query
+            download_pdfs: Whether to download and extract PDF content
             **kwargs: Additional search parameters
             
         Returns:
             List of ArXiv results
         """
         search_query = ArxivQuery(query=query, **kwargs)
-        return self._execute_search(search_query)
+        results = self._execute_search(search_query)
+        return self._enhance_results_with_pdf_content(results, download_pdfs)
     
-    def search_recent_papers(self, topic: str, days_back: int = 30) -> List[ArxivResult]:
+    def search_recent_papers(self, topic: str, days_back: int = 30, download_pdfs: bool = True) -> List[ArxivResult]:
         """
         Search for recent papers on a topic.
         
         Args:
             topic: The research topic
             days_back: Number of days to look back
+            download_pdfs: Whether to download and extract PDF content
             
         Returns:
             List of recent ArXiv results
@@ -102,15 +113,16 @@ class ArxivSearchTool:
             "sort_order": "descending"
         }
         
-        return self.search(topic, **search_params)
+        return self.search(topic, download_pdfs=download_pdfs, **search_params)
     
-    def search_by_category(self, query: str, categories: List[str]) -> List[ArxivResult]:
+    def search_by_category(self, query: str, categories: List[str], download_pdfs: bool = True) -> List[ArxivResult]:
         """
         Search within specific ArXiv categories.
         
         Args:
             query: The search query
             categories: List of ArXiv category codes (e.g., ['cs.AI', 'cs.LG'])
+            download_pdfs: Whether to download and extract PDF content
             
         Returns:
             List of ArXiv results
@@ -119,7 +131,72 @@ class ArxivSearchTool:
         cat_filter = " OR ".join([f"cat:{cat}" for cat in categories])
         combined_query = f"({query}) AND ({cat_filter})"
         
-        return self.search(combined_query)
+        return self.search(combined_query, download_pdfs=download_pdfs)
+    
+    def _download_pdf_content(self, pdf_url: str) -> Optional[str]:
+        """
+        Download and extract text content from a PDF.
+        
+        Args:
+            pdf_url: URL to the PDF file
+            
+        Returns:
+            Extracted text content or None if extraction fails
+        """
+        if not PDF_AVAILABLE:
+            logger.warning("PyPDF2 not available. Cannot extract PDF content.")
+            return None
+            
+        try:
+            # Download PDF
+            response = requests.get(pdf_url, timeout=30)
+            response.raise_for_status()
+            
+            # Extract text using PyPDF2
+            pdf_file = io.BytesIO(response.content)
+            pdf_reader = PyPDF2.PdfReader(pdf_file)
+            
+            text = ""
+            for page in pdf_reader.pages:
+                try:
+                    text += page.extract_text() + "\n"
+                except Exception as e:
+                    logger.warning(f"Failed to extract text from page: {e}")
+                    continue
+            
+            if len(text.strip()) == 0:
+                logger.warning("No text extracted from PDF")
+                return None
+                
+            logger.info(f"Successfully extracted {len(text)} characters from PDF")
+            return text.strip()
+            
+        except Exception as e:
+            logger.error(f"Failed to download or extract PDF content: {e}")
+            return None
+    
+    def _enhance_results_with_pdf_content(self, results: List[ArxivResult], download_pdfs: bool = True) -> List[ArxivResult]:
+        """
+        Enhance ArXiv results with full PDF content.
+        
+        Args:
+            results: List of ArXiv results
+            download_pdfs: Whether to download and extract PDF content
+            
+        Returns:
+            Enhanced results with PDF content
+        """
+        if not download_pdfs or not PDF_AVAILABLE:
+            return results
+            
+        enhanced_results = []
+        for result in results:
+            if result.pdf_url:
+                logger.info(f"Downloading PDF for: {result.title}")
+                result.full_text = self._download_pdf_content(result.pdf_url)
+            enhanced_results.append(result)
+            
+        return enhanced_results
     
     def _execute_search(self, search_query: ArxivQuery) -> List[ArxivResult]:
         """
@@ -134,7 +211,7 @@ class ArxivSearchTool:
         try:
             # Prepare search parameters
             params = {
-                "search_query": f"{search_query.search_query}:{quote_plus(search_query.query)}",
+                "search_query": f"{search_query.search_query}:{search_query.query}",
                 "max_results": search_query.max_results,
                 "sortBy": search_query.sort_by,
                 "sortOrder": search_query.sort_order
@@ -210,23 +287,34 @@ class ArxivSearchTool:
         insights = {}
         
         for i, result in enumerate(arxiv_results):
+            # Use full text if available, otherwise use abstract
+            if result.full_text:
+                content_for_llm = f"Title: {result.title}\n\nFull Paper Content:\n{result.full_text}\n\nAuthors: {', '.join(result.authors)}"
+                content_type = "full paper"
+            else:
+                content_for_llm = f"Title: {result.title}\n\nAbstract: {result.abstract}\n\nAuthors: {', '.join(result.authors)}"
+                content_type = "abstract only"
+            
             insights[f"{i+1}"] = {
                 "title": result.title,
                 "url": result.url,
                 "authors": result.authors,
                 "published": result.published_date,
-                "categories": result.categories
+                "categories": result.categories,
+                "content_type": content_type,
+                "pdf_available": result.pdf_url is not None,
+                "full_text_extracted": result.full_text is not None
             }
             
-            content_for_llm = f"Title: {result.title}\n\nAbstract: {result.abstract}\n\nAuthors: {', '.join(result.authors)}"
-            
             prompt = f"""
-            Based on the following academic paper, extract relevant insights and key findings.
+            Based on the following academic paper ({content_type}), extract relevant insights and key findings.
             Focus on:
             - "key_findings": main research findings and conclusions
             - "methodology": research methods and approaches used
             - "relevance": how this relates to current research trends
             - "implications": potential applications or impact
+            - "data_and_experiments": experimental setup and data analysis (if available)
+            - "limitations": acknowledged limitations or future work needed
             
             Paper details:
             {content_for_llm}
@@ -280,9 +368,24 @@ class ArxivSearchTool:
     def format_results(self, query: str, arxiv_results: List[ArxivResult]) -> Dict[str, Any]:
         """Return standardized structure with key insights and summary."""
         if not arxiv_results:
-            return {"query": query, "results": [], "summary": "No results"}
+            return {
+                "query": query, 
+                "results": [], 
+                "summary": "No results",
+                "processing_details": {
+                    "papers_found": 0,
+                    "papers_processed": 0,
+                    "pdfs_downloaded": 0,
+                    "insights_extracted": 0
+                }
+            }
 
+        # Track processing details
+        papers_with_pdfs = len([r for r in arxiv_results if r.pdf_url])
+        papers_with_full_text = len([r for r in arxiv_results if r.full_text])
+        
         insights_map = self.extract_key_insights(arxiv_results)
+        insights_extracted = len(insights_map) if isinstance(insights_map, dict) else 0
 
         results_list: List[Dict[str, Any]] = []
         for idx, res in enumerate(arxiv_results):
@@ -296,6 +399,11 @@ class ArxivSearchTool:
                 "relevance_score": res.score,
                 "type": "academic",
                 "key_insights": key_insights,
+                "authors": res.authors[:3],  # Show first 3 authors
+                "published_date": res.published_date,
+                "categories": res.categories[:2],  # Show first 2 categories
+                "pdf_available": res.pdf_url is not None,
+                "full_text_extracted": res.full_text is not None
             })
 
         summary = ""
@@ -303,12 +411,24 @@ class ArxivSearchTool:
             try:
                 summary = self.get_search_summary(query, insights_map)
             except Exception:
-                summary = ""
+                summary = f"Found {len(arxiv_results)} academic papers on ArXiv related to the query."
 
         return {
             "query": query,
             "results": results_list,
             "summary": summary,
+            "processing_details": {
+                "papers_found": len(arxiv_results),
+                "papers_processed": len(arxiv_results),
+                "pdfs_available": papers_with_pdfs,
+                "pdfs_downloaded": papers_with_full_text,
+                "insights_extracted": insights_extracted,
+                "categories_covered": len(set([cat for res in arxiv_results for cat in res.categories])),
+                "date_range": {
+                    "earliest": min([res.published_date for res in arxiv_results]) if arxiv_results else "",
+                    "latest": max([res.published_date for res in arxiv_results]) if arxiv_results else ""
+                }
+            }
         }
 
 

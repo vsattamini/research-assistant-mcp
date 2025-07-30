@@ -8,6 +8,7 @@ chromadb
 
 tavily-python
 feedparser
+PyPDF2
 
 gradio
 

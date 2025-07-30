@@ -8,6 +8,7 @@ and returns structured search plans and results.
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
@@ -17,8 +18,9 @@ try:
 except ImportError:
     OPENAI_AVAILABLE = False
 
-from tools.web_search import WebSearchTool, SearchResult
-from tools.arxiv_search import ArxivSearchTool, ArxivResult
+from src.tools.web_search import WebSearchTool, SearchResult
+from src.tools.arxiv_search import ArxivSearchTool, ArxivResult
+from src.tools.intelligent_search_planner import IntelligentSearchPlanner, SearchPlan as IntelligentSearchPlan
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,7 @@ class SearchResults:
     # (i.e. extract_key_insights has been run) so that downstream steps can
     # decide whether a separate EXTRACT task is necessary.
     results_processed: bool = False
+    metadata: Dict[str, Any] = None
 
 
 class SearchCoordinator:
@@ -80,6 +83,9 @@ class SearchCoordinator:
         # Initialize search tools
         self.web_tool = WebSearchTool(api_key=web_api_key)
         self.arxiv_tool = ArxivSearchTool()
+        
+        # Initialize intelligent search planner
+        self.intelligent_planner = IntelligentSearchPlanner(openai_api_key=openai_api_key)
         
         # Initialize OpenAI client for structured planning
         if OPENAI_AVAILABLE and openai_api_key:
@@ -140,7 +146,7 @@ class SearchCoordinator:
     
     def plan_searches(self, research_question: str, focus: str) -> List[SearchPlan]:
         """
-        Create a structured search plan for the research question.
+        Create a structured search plan for the research question using intelligent analysis.
         
         Args:
             research_question: The main research question
@@ -149,93 +155,85 @@ class SearchCoordinator:
         Returns:
             List of SearchPlan objects
         """
-        if not self.openai_client:
-            # Fallback to simple planning
-            return self._create_fallback_plan(research_question, focus)
+        # Use intelligent planner to analyze the question
+        intelligent_plan = self.intelligent_planner.analyze_research_question(research_question)
         
-        try:
-            messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a research search planner. Create comprehensive "
-                        "search strategies that combine web and academic sources."
-                    )
-                },
-                {
-                    "role": "user", 
-                    "content": f"""
-                    Research Question: {research_question}
-                    Search Focus: {focus}
-                    
-                    Create a search plan that covers:
-                    1. General web information
-                    2. Recent news and developments  
-                    3. Academic papers and research
-                    4. Statistics and data
-                    
-                    Prioritize searches that are most likely to provide relevant, 
-                    high-quality information for this research question.
-                    """
-                }
-            ]
-            
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                tools=[self._planning_tool],
-                tool_choice="auto",
-                temperature=0.1
-            )
-            
-            message = response.choices[0].message
-            if hasattr(message, 'tool_calls') and message.tool_calls:
-                arguments = message.tool_calls[0].function.arguments
-                payload = json.loads(arguments)
-                searches_data = payload.get("searches", [])
-                
-                plans = []
-                for search_data in searches_data:
-                    plan = SearchPlan(
-                        search_term=search_data["search_term"],
-                        search_type=SearchType(search_data["search_type"]),
-                        search_source=SearchSource(search_data["search_source"]),
-                        priority=search_data["priority"],
-                        max_results=search_data.get("max_results", 10)
-                    )
-                    plans.append(plan)
-                
-                logger.info(f"Created {len(plans)} search plans")
-                return sorted(plans, key=lambda x: x.priority, reverse=True)
-            
-        except Exception as e:
-            logger.warning(f"Structured search planning failed: {e}. Using fallback.")
+        # Convert intelligent plan to traditional search plans
+        plans = self._convert_intelligent_plan_to_search_plans(intelligent_plan, research_question, focus)
         
-        return self._create_fallback_plan(research_question, focus)
+        logger.info(f"Created {len(plans)} intelligent search plans for domain: {intelligent_plan.primary_domain}")
+        return sorted(plans, key=lambda x: x.priority, reverse=True)
     
-    def _create_fallback_plan(self, research_question: str, focus: str) -> List[SearchPlan]:
-        """Create a basic search plan when structured planning fails."""
-        plans = [
-            SearchPlan(
-                search_term=f"{focus} {research_question}",
+    def _convert_intelligent_plan_to_search_plans(self, intelligent_plan: IntelligentSearchPlan, 
+                                                research_question: str, focus: str) -> List[SearchPlan]:
+        """Convert intelligent search plan to traditional search plans."""
+        plans = []
+        
+        # Always include web search as it's broadly applicable
+        if any("web" in strategy.value for strategy in intelligent_plan.search_strategies):
+            web_term = f"{focus} {research_question}" if focus else research_question
+            plans.append(SearchPlan(
+                search_term=web_term,
                 search_type=SearchType.GENERAL,
                 search_source=SearchSource.WEB,
-                priority=8,
-                max_results=10
-            ),
-            SearchPlan(
+                priority=9,
+                max_results=10,
+                metadata={"intelligent_analysis": True, "domain": intelligent_plan.primary_domain.value}
+            ))
+        
+        # Add ArXiv search only if deemed suitable by intelligent analysis
+        if intelligent_plan.arxiv_suitable and intelligent_plan.academic_suitable:
+            plans.append(SearchPlan(
                 search_term=research_question,
                 search_type=SearchType.ACADEMIC,
                 search_source=SearchSource.ARXIV,
+                priority=8,
+                max_results=8,
+                metadata={"intelligent_analysis": True, "confidence": intelligent_plan.confidence_score}
+            ))
+        
+        # Add news search for current events or time-sensitive topics
+        if any("news" in strategy.value for strategy in intelligent_plan.search_strategies):
+            plans.append(SearchPlan(
+                search_term=f"{focus} recent developments" if focus else f"{research_question} recent",
+                search_type=SearchType.NEWS,
+                search_source=SearchSource.WEB,
                 priority=7,
-                max_results=8
+                max_results=5,
+                metadata={"intelligent_analysis": True}
+            ))
+        
+        # Add statistical data search if recommended
+        if any("statistical" in strategy.value for strategy in intelligent_plan.search_strategies):
+            plans.append(SearchPlan(
+                search_term=f"{research_question} statistics data",
+                search_type=SearchType.STATISTICS,
+                search_source=SearchSource.WEB,
+                priority=6,
+                max_results=5,
+                metadata={"intelligent_analysis": True}
+            ))
+        
+        return plans if plans else self._create_fallback_plan(research_question, focus)
+    
+    def _create_fallback_plan(self, research_question: str, focus: str) -> List[SearchPlan]:
+        """Create a basic search plan when intelligent planning fails."""
+        plans = [
+            SearchPlan(
+                search_term=f"{focus} {research_question}" if focus else research_question,
+                search_type=SearchType.GENERAL,
+                search_source=SearchSource.WEB,
+                priority=8,
+                max_results=10,
+                metadata={"fallback_plan": True}
             ),
             SearchPlan(
-                search_term=f"{focus} recent developments",
+                search_term=f"{focus} recent developments" if focus else f"{research_question} recent",
                 search_type=SearchType.NEWS,
                 search_source=SearchSource.WEB,
                 priority=6,
-                max_results=5
+                max_results=5,
+                metadata={"fallback_plan": True}
             )
         ]
         return plans
@@ -265,12 +263,18 @@ class SearchCoordinator:
                 else:
                     web_results = self.web_tool.search_research_topic(plan.search_term)
             
-            # Execute arxiv search if requested  
+            # Execute arxiv search if requested and validated by intelligent planner
             if plan.search_source in [SearchSource.ARXIV, SearchSource.BOTH]:
-                if plan.search_type == SearchType.RECENT_PAPERS:
-                    arxiv_results = self.arxiv_tool.search_recent_papers(plan.search_term)
+                # Check if this is an intelligently planned search or fallback
+                if plan.metadata and plan.metadata.get("intelligent_analysis"):
+                    logger.info("Executing ArXiv search validated by intelligent planner")
+                    if plan.search_type == SearchType.RECENT_PAPERS:
+                        arxiv_results = self.arxiv_tool.search_recent_papers(plan.search_term)
+                    else:
+                        arxiv_results = self.arxiv_tool.search(plan.search_term, max_results=plan.max_results)
                 else:
-                    arxiv_results = self.arxiv_tool.search(plan.search_term, max_results=plan.max_results)
+                    logger.info("Skipping ArXiv search - not validated by intelligent analysis")
+                    arxiv_results = []
             
             logger.info(f"Search executed: {len(web_results)} web + {len(arxiv_results)} arxiv results")
             
@@ -287,12 +291,26 @@ class SearchCoordinator:
             if arxiv_results:
                 standardized.append(self.arxiv_tool.format_results(plan.search_term, arxiv_results))
 
+        # Generate search metrics
+        search_metrics = {
+            "execution_time": datetime.now().isoformat(),
+            "web_results_count": len(web_results),
+            "arxiv_results_count": len(arxiv_results),
+            "total_sources": len(web_results) + len(arxiv_results),
+            "search_plan_executed": plan.__dict__,
+            "processing_completed": process_results and bool(standardized),
+            "unique_domains": len(set([getattr(r, 'url', '').split('/')[2] for r in web_results if hasattr(r, 'url') and r.url])),
+            "search_success": len(web_results) > 0 or len(arxiv_results) > 0
+        }
+
         return SearchResults(
             web_results=web_results,
             arxiv_results=arxiv_results,
             search_plan=plan,
             standardized_results=standardized if standardized else None,
-            results_processed=process_results and bool(standardized)
+            results_processed=process_results and bool(standardized),
+            summary=f"Search completed: {len(web_results)} web + {len(arxiv_results)} arXiv results",
+            metadata=search_metrics
         )
     
     def execute_all_searches(self, plans: List[SearchPlan], process_results: bool = True) -> List[SearchResults]:
@@ -312,16 +330,15 @@ class SearchCoordinator:
         
         return all_results 
 
-    # ------------------------------------------------------------------
-    # Thin wrapper: one-shot combined search (no LLM planning)
-    # ------------------------------------------------------------------
+
 
     def simple_search(self, query: str, focus: str = "", process_results: bool = True) -> SearchResults:
-        """Run a lightweight combined search across web + arxiv.
+        """Run an intelligent combined search across appropriate sources.
 
-        This skips the LLM planning step and just performs:
-        1. A general web search for research topics (Tavily)
-        2. A recent-papers search on ArXiv
+        Uses the intelligent search planner to determine the best approach:
+        1. Analyzes the research question to determine optimal strategy
+        2. Performs web search (always appropriate)
+        3. Only uses ArXiv if the question is suitable for academic papers
 
         Args:
             query: The overall research question
@@ -330,26 +347,46 @@ class SearchCoordinator:
         Returns:
             SearchResults object with unified lists.
         """
-        search_term = f"{focus} {query}".strip()
+        search_term = f"{focus} {query}".strip() if focus else query
+        
+        # Use intelligent planner to analyze the question
+        intelligent_plan = self.intelligent_planner.analyze_research_question(query)
+        logger.info(f"Intelligent analysis: Domain={intelligent_plan.primary_domain.value}, "
+                   f"ArXiv suitable={intelligent_plan.arxiv_suitable}, "
+                   f"Confidence={intelligent_plan.confidence_score}")
 
+        # Always perform web search as it's broadly applicable
         try:
             web_results = self.web_tool.search_research_topic(search_term)
         except Exception as e:
             logger.error(f"Web search failed: {e}")
             web_results = []
 
-        try:
-            arxiv_results = self.arxiv_tool.search_recent_papers(query)
-        except Exception as e:
-            logger.error(f"ArXiv search failed: {e}")
-            arxiv_results = []
+        # Only perform ArXiv search if validated by intelligent analysis
+        arxiv_results = []
+        if intelligent_plan.arxiv_suitable and intelligent_plan.academic_suitable:
+            try:
+                logger.info("Performing ArXiv search - validated by intelligent analysis")
+                arxiv_results = self.arxiv_tool.search_recent_papers(query)
+            except Exception as e:
+                logger.error(f"ArXiv search failed: {e}")
+                arxiv_results = []
+        else:
+            logger.info(f"Skipping ArXiv search - not suitable for domain: {intelligent_plan.primary_domain.value}")
 
         plan = SearchPlan(
             search_term=search_term,
             search_type=SearchType.GENERAL,
-            search_source=SearchSource.BOTH,
+            search_source=SearchSource.WEB if not intelligent_plan.arxiv_suitable else SearchSource.BOTH,
             priority=10,
             max_results=10,
+            metadata={
+                "intelligent_analysis": True,
+                "domain": intelligent_plan.primary_domain.value,
+                "arxiv_suitable": intelligent_plan.arxiv_suitable,
+                "confidence": intelligent_plan.confidence_score,
+                "reasoning": intelligent_plan.reasoning
+            }
         )
 
         # Optional post-processing step
@@ -360,10 +397,51 @@ class SearchCoordinator:
             if arxiv_results:
                 standardized.append(self.arxiv_tool.format_results(query, arxiv_results))
 
+        # Generate search metrics for simple search
+        search_metrics = {
+            "execution_time": datetime.now().isoformat(),
+            "web_results_count": len(web_results),
+            "arxiv_results_count": len(arxiv_results),
+            "total_sources": len(web_results) + len(arxiv_results),
+            "search_method": "simple_search",
+            "processing_completed": process_results and bool(standardized),
+            "search_success": len(web_results) > 0 or len(arxiv_results) > 0
+        }
+
+        # Add intelligent analysis metadata to search metrics
+        search_metrics.update({
+            "intelligent_analysis": {
+                "domain": intelligent_plan.primary_domain.value,
+                "arxiv_suitable": intelligent_plan.arxiv_suitable,
+                "academic_suitable": intelligent_plan.academic_suitable,
+                "confidence_score": intelligent_plan.confidence_score,
+                "reasoning": intelligent_plan.reasoning,
+                "search_strategies": [s.value for s in intelligent_plan.search_strategies]
+            }
+        })
+        
+        # Validate results if we have both the planner and results
+        if web_results or arxiv_results:
+            try:
+                results_summary = f"Found {len(web_results)} web results and {len(arxiv_results)} academic papers"
+                validation = self.intelligent_planner.validate_search_results(query, results_summary, intelligent_plan)
+                search_metrics["validation"] = {
+                    "overall_score": validation.overall_score,
+                    "relevance_score": validation.relevance_score,
+                    "quality_score": validation.quality_score,
+                    "credibility_score": validation.credibility_score,
+                    "completeness_score": validation.completeness_score,
+                    "validation_notes": validation.validation_notes
+                }
+            except Exception as e:
+                logger.warning(f"Search validation failed: {e}")
+
         return SearchResults(
             web_results=web_results,
             arxiv_results=arxiv_results,
             search_plan=plan,
             standardized_results=standardized if standardized else None,
-            results_processed=process_results and bool(standardized)
+            results_processed=process_results and bool(standardized),
+            summary=f"Intelligent search completed: {len(web_results)} web + {len(arxiv_results)} arXiv results (Domain: {intelligent_plan.primary_domain.value})",
+            metadata=search_metrics
         ) 
