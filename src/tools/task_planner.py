@@ -36,6 +36,7 @@ class TaskType(str, Enum):
 
     SEARCH = "search"
     EXTRACT = "extract"
+    CSV_ANALYSIS = "csv_analysis"
     SUMMARIZE = "summarize"
     SYNTHESIZE = "synthesize"
     REPORT = "report"

@@ -13,20 +13,26 @@ from enum import Enum
 import asyncio
 from datetime import datetime
 
-from models.model_builder import ModelBuilder
+from src.models.model_builder import ModelBuilder
 
 # New import: dedicated planning tool that reliably returns JSON via function calling
 try:
-    from tools.task_planner import TaskPlannerTool
+    from src.tools.task_planner import TaskPlannerTool
 except ImportError:  # pragma: no cover – soft dependency
     TaskPlannerTool = None  # type: ignore
 
 # Import search coordinator for structured search execution
 try:
-    from orchestration.search_coordinator import SearchCoordinator
+    from src.orchestration.search_coordinator import SearchCoordinator
     import os
 except ImportError:  # pragma: no cover – soft dependency
     SearchCoordinator = None  # type: ignore
+
+# Import CSV analysis tool
+try:
+    from src.tools.csv_analysis import CSVAnalysisTool
+except ImportError:  # pragma: no cover – soft dependency
+    CSVAnalysisTool = None  # type: ignore
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -48,6 +54,7 @@ class TaskType(Enum):
     RETRIEVE = "retrieve"
     SEARCH = "search"
     EXTRACT = "extract"
+    CSV_ANALYSIS = "csv_analysis"
     SUMMARIZE = "summarize"
     SYNTHESIZE = "synthesize"
     REPORT = "report"
@@ -117,6 +124,19 @@ class MCPSimulator:
         else:
             self.search_coordinator = None
 
+        # Initialize CSV analysis tool
+        if CSVAnalysisTool is not None:
+            try:
+                self.csv_analysis_tool = CSVAnalysisTool(
+                    model_builder=self.model_builder
+                )
+                logger.info("CSV analysis tool initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize CSV analysis tool: {e}")
+                self.csv_analysis_tool = None
+        else:
+            self.csv_analysis_tool = None
+
     def create_session(self, question: str) -> str:
         """Create a new research session."""
         session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{hash(question) % 10000}"
@@ -164,7 +184,7 @@ class MCPSimulator:
 
         Create a JSON array of tasks with the following structure:
         {{
-            "task_type": "search|extract|summarize|synthesize|report",
+            "task_type": "search|extract|csv_analysis|summarize|synthesize|report",
             "description": "Clear description of what this task should accomplish",
             "priority": 1-5 (1=highest priority),
         }}
@@ -172,6 +192,7 @@ class MCPSimulator:
         Task types:
         - search: Find relevant information from web or documents
         - extract: Extract key facts, data, or insights from sources
+        - csv_analysis: Analyze tabular/CSV data for statistical insights
         - summarize: Create concise summaries of information
         - synthesize: Combine and analyze multiple sources
         - report: Generate final structured response
@@ -233,6 +254,8 @@ class MCPSimulator:
                 result = self._execute_search_task(task, session)
             elif task.task_type == TaskType.EXTRACT:
                 result = self._execute_extract_task(task, session)
+            elif task.task_type == TaskType.CSV_ANALYSIS:
+                result = self._execute_csv_analysis_task(task, session)
             elif task.task_type == TaskType.SUMMARIZE:
                 result = self._execute_summarize_task(task, session)
             elif task.task_type == TaskType.SYNTHESIZE:
@@ -791,6 +814,152 @@ class MCPSimulator:
             "timestamp": datetime.now().isoformat(),
         }
 
+    def _execute_csv_analysis_task(
+        self, task: ResearchTask, session: ResearchSession
+    ) -> Dict[str, Any]:
+        """Execute CSV analysis task to analyze tabular data relevant to the research question."""
+        logger.info(f"Executing CSV analysis task: {task.description}")
+
+        if self.csv_analysis_tool is None:
+            logger.warning("CSV analysis tool not available")
+            return {
+                "error": "CSV analysis tool not available",
+                "subtasks": [
+                    {
+                        "type": "csv_analysis_unavailable",
+                        "description": "CSV analysis tool not initialized",
+                        "status": "failed",
+                        "details": {
+                            "reason": "CSVAnalysisTool not available or failed to initialize",
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                    }
+                ],
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        try:
+            # Analyze CSV data relevant to the research question
+            analysis_result = self.csv_analysis_tool.analyze_for_query(
+                query=session.original_question
+            )
+
+            # Build detailed subtasks for CSV analysis
+            subtasks = []
+
+            # Dataset discovery subtask
+            subtasks.append(
+                {
+                    "type": "dataset_discovery",
+                    "description": "Discovering relevant CSV datasets",
+                    "status": "completed",
+                    "details": {
+                        "datasets_available": analysis_result["processing_details"][
+                            "datasets_available"
+                        ],
+                        "datasets_matched": analysis_result["processing_details"][
+                            "datasets_matched"
+                        ],
+                        "datasets_processed": analysis_result["processing_details"][
+                            "datasets_processed"
+                        ],
+                        "discovery_method": "keyword matching with dataset descriptions",
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                }
+            )
+
+            # Data analysis subtask for each dataset
+            for result in analysis_result["results"]:
+                subtasks.append(
+                    {
+                        "type": "tabular_analysis",
+                        "description": f"Statistical analysis of {result['dataset']}",
+                        "status": "completed",
+                        "details": {
+                            "dataset_name": result["dataset"],
+                            "dataset_description": result["description"],
+                            "rows": result["statistics"]["shape"]["rows"],
+                            "columns": result["statistics"]["shape"]["columns"],
+                            "missing_data_percentage": round(
+                                result["statistics"]["missing_data_pct"], 2
+                            ),
+                            "data_types_variety": result["statistics"]["data_types"],
+                            "key_insights_count": len(result["key_insights"]),
+                            "analysis_type": result["type"],
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                    }
+                )
+
+            # Summary generation subtask
+            subtasks.append(
+                {
+                    "type": "csv_summary_generation",
+                    "description": "Generating comprehensive summary across all analyzed datasets",
+                    "status": "completed",
+                    "details": {
+                        "total_datasets_analyzed": analysis_result["datasets_analyzed"],
+                        "summary_length": len(analysis_result["summary"]),
+                        "summary_method": (
+                            "AI-powered analysis"
+                            if self.csv_analysis_tool.ai_enabled
+                            else "Basic statistical summary"
+                        ),
+                        "timestamp": datetime.now().isoformat(),
+                    },
+                }
+            )
+
+            # Add CSV analysis results to session sources
+            for result in analysis_result["results"]:
+                session.sources.append(
+                    {
+                        "type": "tabular_data",
+                        "title": f"Dataset: {result['dataset']}",
+                        "source": "CSV Analysis Tool",
+                        "url": f"file://{result['dataset']}",
+                        "content": result["summary"],
+                        "metadata": {
+                            "dataset_shape": result["statistics"]["shape"],
+                            "key_insights": result["key_insights"],
+                            "analysis_timestamp": analysis_result["processing_details"][
+                                "analysis_timestamp"
+                            ],
+                        },
+                    }
+                )
+
+            logger.info(
+                f"CSV analysis completed successfully: {analysis_result['datasets_analyzed']} datasets analyzed"
+            )
+
+            return {
+                "analysis_results": analysis_result,
+                "datasets_analyzed": analysis_result["datasets_analyzed"],
+                "summary": analysis_result["summary"],
+                "subtasks": subtasks,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        except Exception as e:
+            logger.error(f"CSV analysis task failed: {e}")
+            return {
+                "error": str(e),
+                "subtasks": [
+                    {
+                        "type": "csv_analysis_error",
+                        "description": "CSV analysis encountered an error",
+                        "status": "failed",
+                        "details": {
+                            "error_message": str(e),
+                            "timestamp": datetime.now().isoformat(),
+                        },
+                    }
+                ],
+                "timestamp": datetime.now().isoformat(),
+            }
+
     def _execute_summarize_task(
         self, task: ResearchTask, session: ResearchSession
     ) -> Dict[str, Any]:
@@ -812,6 +981,7 @@ class MCPSimulator:
         # Gather all processed data from previous tasks
         standardized_blocks = []  # from SEARCH tasks
         extraction_blocks = []  # from EXTRACT tasks
+        csv_analysis_blocks = []  # from CSV_ANALYSIS tasks
 
         for prev in session.tasks:
             if prev.task_type == TaskType.SEARCH and prev.output_data:
@@ -820,6 +990,8 @@ class MCPSimulator:
                 )
             if prev.task_type == TaskType.EXTRACT and prev.output_data:
                 extraction_blocks.append(prev.output_data)
+            if prev.task_type == TaskType.CSV_ANALYSIS and prev.output_data:
+                csv_analysis_blocks.append(prev.output_data)
 
         # Build detailed subtasks for synthesis
         subtasks = []
@@ -833,8 +1005,10 @@ class MCPSimulator:
                 "details": {
                     "search_data_blocks": len(standardized_blocks),
                     "extraction_data_blocks": len(extraction_blocks),
+                    "csv_analysis_blocks": len(csv_analysis_blocks),
                     "total_data_sources": len(standardized_blocks)
-                    + len(extraction_blocks),
+                    + len(extraction_blocks)
+                    + len(csv_analysis_blocks),
                     "data_quality": "Processed and structured",
                     "timestamp": datetime.now().isoformat(),
                 },
@@ -869,6 +1043,7 @@ class MCPSimulator:
         synthesis_context = {
             "search_results": standardized_blocks,
             "extracted_data": extraction_blocks,
+            "csv_analysis_data": csv_analysis_blocks,
         }
 
         synth_prompt = f"""
@@ -881,7 +1056,8 @@ class MCPSimulator:
 
         Using the data above, produce a structured synthesis that includes:
         - Themes and patterns across sources
-        - Key findings
+        - Key findings from search, extraction, and statistical analysis
+        - Quantitative insights from CSV data analysis (if available)
         - Contradictions or differing viewpoints (if any)
         - Gaps in the information
         - Preliminary conclusions that answer the research question
